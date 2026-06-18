@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouTube Downloader Pessoal</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  p.sub { color: #666; font-size: 0.9rem; margin-top: -8px; }
+  input[type=text] { width: 100%; padding: 10px; font-size: 1rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 6px; }
+  select { width: 100%; padding: 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #ccc; }
+  button { margin-top: 12px; margin-right: 8px; padding: 10px 16px; font-size: 0.95rem; border: none; border-radius: 6px; background: #1a1a1a; color: white; cursor: pointer; }
+  button.secondary { background: #2563eb; }
+  button.link { background: none; color: #2563eb; padding: 4px 0; text-decoration: underline; font-size: 0.85rem; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  label.field-label { display: block; margin-top: 10px; font-size: 0.85rem; color: #555; }
+
+  #formats { margin-top: 16px; max-height: 280px; overflow-y: auto; }
+  .format-item { padding: 8px 10px; border: 1px solid #eee; border-radius: 6px; margin-bottom: 6px; cursor: pointer; font-size: 0.9rem; }
+  .format-item:hover { background: #f7f7f7; }
+  .format-item.selected { border-color: #1a1a1a; background: #f0f0f0; }
+
+  #playlistVideos { margin-top: 12px; max-height: 360px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; }
+  .video-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; font-size: 0.88rem; }
+  .video-row:last-child { border-bottom: none; }
+  .video-row.downloaded { background: #f3fbf3; }
+  .video-row input[type=checkbox] { flex-shrink: 0; }
+  .video-title { flex: 1; }
+  .badge { font-size: 0.75rem; color: #2e7d32; background: #e6f4ea; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+
+  #status { margin-top: 16px; font-size: 0.9rem; color: #555; white-space: pre-wrap; }
+  #downloadLink { display: none; margin-top: 12px; }
+  #downloadLink a { display: block; font-size: 0.85rem; color: #2563eb; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <h1>YouTube Downloader (uso pessoal)</h1>
+  <p class="sub">Ferramenta privada, roda só no seu computador (localhost).</p>
+
+  <input type="text" id="url" placeholder="Cole a URL do vídeo ou playlist aqui">
+
+  <label class="field-label">
+    Navegador onde você está logado no YouTube (opcional — só necessário para vídeos privados/de membros que você tem acesso):
+  </label>
+  <select id="browser">
+    <option value="">Nenhum (vídeos públicos)</option>
+    <option value="chrome">Chrome</option>
+    <option value="firefox">Firefox</option>
+    <option value="edge">Edge</option>
+    <option value="brave">Brave</option>
+  </select>
+
+  <div>
+    <button id="btnListarPlaylist" class="secondary">Listar vídeos da playlist</button>
+    <button id="btnBuscar">Buscar formatos (vídeo único)</button>
+    <button id="btnBaixarDireto">Baixar tudo direto (melhor qualidade)</button>
+  </div>
+
+  <!-- Lista de vídeos da playlist com checkboxes -->
+  <div id="playlistSection" style="display:none;">
+    <div style="margin-top:14px; display:flex; justify-content:space-between; align-items:center;">
+      <strong id="playlistTitleLabel"></strong>
+      <span>
+        <button class="link" id="btnSelecionarTodos" type="button">Marcar não baixados</button>
+        <button class="link" id="btnDesmarcarTodos" type="button">Desmarcar tudo</button>
+      </span>
+    </div>
+    <div id="playlistVideos"></div>
+    <button id="btnBaixarSelecionados" class="secondary">Baixar selecionados</button>
+  </div>
+
+  <div id="formats"></div>
+  <button id="btnBaixar" style="display:none;">Baixar selecionado</button>
+
+  <div id="status"></div>
+  <div id="downloadLink"></div>
+
+<script>
+let selectedFormat = null;
+let playlistVideosCache = [];
+let playlistSourceUrl = null;
+
+function getBrowser() {
+  return document.getElementById('browser').value || undefined;
+}
+
+function getUrl() {
+  return document.getElementById('url').value.trim();
+}
+
+// ---------- Buscar formatos de um vídeo único ----------
+document.getElementById('btnBuscar').addEventListener('click', async () => {
+  const url = getUrl();
+  const status = document.getElementById('status');
+  const formatsDiv = document.getElementById('formats');
+  formatsDiv.innerHTML = '';
+  document.getElementById('btnBaixar').style.display = 'none';
+  document.getElementById('downloadLink').style.display = 'none';
+  selectedFormat = null;
+
+  if (!url) { status.textContent = 'Cole uma URL primeiro.'; return; }
+  status.textContent = 'Buscando formatos...';
+
+  try {
+    const res = await fetch('/api/formats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, browser: getBrowser() })
+    });
+    const data = await res.json();
+    if (data.error) { status.textContent = 'Erro: ' + data.error; return; }
+
+    status.textContent = data.title || '';
+    data.formats.forEach((f) => {
+      const div = document.createElement('div');
+      div.className = 'format-item';
+      const sizeMB = f.filesize ? (f.filesize / 1024 / 1024).toFixed(1) + ' MB' : '';
+      div.textContent = `${f.format_id} — ${f.resolution} — ${f.ext}${sizeMB ? ' — ' + sizeMB : ''}${f.note ? ' — ' + f.note : ''}`;
+      div.addEventListener('click', () => {
+        document.querySelectorAll('.format-item').forEach((el) => el.classList.remove('selected'));
+        div.classList.add('selected');
+        selectedFormat = f.format_id;
+        document.getElementById('btnBaixar').style.display = 'inline-block';
+      });
+      formatsDiv.appendChild(div);
+    });
+  } catch (e) {
+    status.textContent = 'Erro ao conectar com o servidor.';
+  }
+});
+
+// ---------- Listar vídeos da playlist ----------
+document.getElementById('btnListarPlaylist').addEventListener('click', async () => {
+  const url = getUrl();
+  const status = document.getElementById('status');
+  const section = document.getElementById('playlistSection');
+  const container = document.getElementById('playlistVideos');
+  container.innerHTML = '';
+  section.style.display = 'none';
+
+  if (!url) { status.textContent = 'Cole uma URL primeiro.'; return; }
+  status.textContent = 'Listando vídeos da playlist...';
+
+  try {
+    const res = await fetch('/api/playlist-info', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, browser: getBrowser() })
+    });
+    const data = await res.json();
+    if (data.error) { status.textContent = 'Erro: ' + data.error; return; }
+
+    playlistVideosCache = data.videos || [];
+    playlistSourceUrl = data.playlistUrl || url;
+    status.textContent = `${playlistVideosCache.length} vídeo(s) encontrados.`;
+    document.getElementById('playlistTitleLabel').textContent = data.playlistTitle || 'Vídeos';
+
+    playlistVideosCache.forEach((v, idx) => {
+      const row = document.createElement('div');
+      row.className = 'video-row' + (v.downloaded ? ' downloaded' : '');
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.idx = idx;
+      checkbox.checked = !v.downloaded; // por padrão, marca só os que ainda não foram baixados
+
+      const title = document.createElement('span');
+      title.className = 'video-title';
+      title.textContent = v.title;
+
+      row.appendChild(checkbox);
+      row.appendChild(title);
+
+      if (v.downloaded) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = '✓ Já baixado';
+        row.appendChild(badge);
+      }
+
+      container.appendChild(row);
+    });
+
+    section.style.display = 'block';
+  } catch (e) {
+    status.textContent = 'Erro ao conectar com o servidor.';
+  }
+});
+
+document.getElementById('btnSelecionarTodos').addEventListener('click', () => {
+  document.querySelectorAll('#playlistVideos input[type=checkbox]').forEach((cb) => {
+    const idx = Number(cb.dataset.idx);
+    cb.checked = !playlistVideosCache[idx].downloaded;
+  });
+});
+
+document.getElementById('btnDesmarcarTodos').addEventListener('click', () => {
+  document.querySelectorAll('#playlistVideos input[type=checkbox]').forEach((cb) => (cb.checked = false));
+});
+
+document.getElementById('btnBaixarSelecionados').addEventListener('click', async () => {
+  const checkboxes = Array.from(document.querySelectorAll('#playlistVideos input[type=checkbox]'));
+  const selectedIndexes = checkboxes
+    .filter((cb) => cb.checked)
+    .map((cb) => playlistVideosCache[Number(cb.dataset.idx)].index);
+
+  if (selectedIndexes.length === 0) {
+    document.getElementById('status').textContent = 'Selecione ao menos um vídeo.';
+    return;
+  }
+  // Usa a URL original da playlist + --playlist-items, em vez de URLs individuais,
+  // para que o yt-dlp preserve o nome da playlist e crie a pasta corretamente.
+  await baixar(undefined, null, { url: playlistSourceUrl, playlistItems: selectedIndexes.join(',') });
+});
+
+// ---------- Download direto (playlist inteira ou vídeo único, sem escolher formato) ----------
+document.getElementById('btnBaixarDireto').addEventListener('click', async () => {
+  await baixar(undefined, null, null);
+});
+
+document.getElementById('btnBaixar').addEventListener('click', async () => {
+  await baixar(selectedFormat ? selectedFormat + '+bestaudio/best' : undefined, null, null);
+});
+
+// ---------- Função compartilhada de download ----------
+// playlistOverride (opcional): { url, playlistItems } — usado ao baixar itens selecionados de uma playlist
+async function baixar(format, urlsList, playlistOverride) {
+  const url = playlistOverride ? playlistOverride.url : getUrl();
+  const status = document.getElementById('status');
+
+  if (!urlsList && !url) { status.textContent = 'Cole uma URL primeiro.'; return; }
+
+  const allButtons = document.querySelectorAll('button');
+  allButtons.forEach((b) => (b.disabled = true));
+  status.textContent = 'Baixando... isso pode levar um tempo, especialmente em playlists.';
+
+  try {
+    const body = { format, browser: getBrowser() };
+    if (urlsList) body.urls = urlsList;
+    else body.url = url;
+    if (playlistOverride && playlistOverride.playlistItems) {
+      body.playlistItems = playlistOverride.playlistItems;
+    }
+
+    const res = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) { status.textContent = 'Erro: ' + data.error; return; }
+
+    let msg = `Concluído: ${data.downloaded} arquivo(s) baixado(s).`;
+    if (data.warning) msg += `\n⚠️ ${data.warning}`;
+    status.textContent = msg;
+
+    const linkContainer = document.getElementById('downloadLink');
+    linkContainer.style.display = data.files && data.files.length ? 'block' : 'none';
+    linkContainer.innerHTML = '';
+    (data.files || []).forEach((f) => {
+      const a = document.createElement('a');
+      a.href = f;
+      a.target = '_blank';
+      a.textContent = decodeURIComponent(f.split('/').pop());
+      linkContainer.appendChild(a);
+    });
+  } catch (e) {
+    status.textContent = 'Erro ao conectar com o servidor.';
+  } finally {
+    allButtons.forEach((b) => (b.disabled = false));
+  }
+}
+</script>
+</body>
+</html>

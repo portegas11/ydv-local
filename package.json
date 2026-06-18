@@ -1,0 +1,12 @@
+{
+  "name": "yt-downloader-pessoal",
+  "version": "1.0.0",
+  "description": "Ferramenta pessoal e privada para baixar vídeos do YouTube usando yt-dlp",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
